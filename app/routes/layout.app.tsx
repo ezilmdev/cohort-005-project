@@ -3,6 +3,10 @@ import type { Route } from "./+types/layout.app";
 import { Sidebar } from "~/components/sidebar";
 import { DevUI } from "~/components/dev-ui";
 import { Toaster } from "sonner";
+import {
+  buildStubNotifications,
+  useNotificationsPrototype,
+} from "~/components/notifications-prototype"; // PROTOTYPE
 import { getCurrentUserId, getDevCountry } from "~/lib/session";
 import { getCountryTierInfo, COUNTRIES } from "~/lib/ppp";
 import { eq, and, or, sql, desc } from "drizzle-orm";
@@ -17,6 +21,8 @@ import {
   teamMembers,
   TeamMemberRole,
   LessonProgressStatus,
+  CourseStatus,
+  UserRole,
 } from "~/db/schema";
 
 function getAllUsers() {
@@ -198,7 +204,37 @@ export async function loader({ request }: Route.LoaderArgs) {
       })
     : [];
 
+  // PROTOTYPE: stub notifications built from real names, for the inbox variants.
+  const ownCourses =
+    currentUser?.role === UserRole.Instructor
+      ? db
+          .select({ id: courses.id, title: courses.title, slug: courses.slug })
+          .from(courses)
+          .where(eq(courses.instructorId, currentUser.id))
+          .limit(3)
+          .all()
+      : [];
+  const protoCourses = ownCourses.length
+    ? ownCourses
+    : db
+        .select({ id: courses.id, title: courses.title, slug: courses.slug })
+        .from(courses)
+        .where(eq(courses.status, CourseStatus.Published))
+        .limit(3)
+        .all();
+  const protoNotifications = currentUser
+    ? buildStubNotifications({
+        role: currentUser.role,
+        courses: protoCourses,
+        studentNames: users
+          .filter((u) => u.role === UserRole.Student)
+          .slice(0, 4)
+          .map((u) => u.name),
+      })
+    : [];
+
   return {
+    protoNotifications,
     users: users.map((u) => ({ id: u.id, name: u.name, role: u.role })),
     currentUser: currentUser
       ? {
@@ -225,7 +261,12 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
     countryTierInfo,
     countries,
     isTeamAdmin: userIsTeamAdmin,
+    protoNotifications,
   } = loaderData;
+  const proto = useNotificationsPrototype(
+    protoNotifications,
+    currentUser?.role ?? null
+  );
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -233,10 +274,13 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
         currentUser={currentUser}
         recentCourses={recentCourses}
         isTeamAdmin={userIsTeamAdmin}
+        headerSlot={proto.headerSlot}
+        navSlot={proto.navSlot}
       />
       <main className="flex-1 overflow-y-auto">
-        <Outlet />
+        {proto.mainOverride ?? <Outlet />}
       </main>
+      {proto.floating}
       <DevUI
         users={users}
         currentUser={currentUser}
